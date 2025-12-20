@@ -6,6 +6,7 @@ const pool = require('./db');
 
 // Route imports
 const employeeRoutes = require('./routes/employees');
+const filterRoutes = require('./routes/filters');
 
 const app = express();
 
@@ -27,6 +28,7 @@ app.get('/', (req, res) => {
  * EMPLOYEE ROUTES (VIEWER)
  */
 app.use('/employees', employeeRoutes);
+app.use('/filters', filterRoutes);
 
 /**
  * GLOBAL ERROR HANDLER (SAFETY NET)
