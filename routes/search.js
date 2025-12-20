@@ -4,10 +4,9 @@ const pool = require('../db');
 
 /**
  * GET /search?q=term
- * Smart search:
- * - employee name
- * - robot name
- * - application name
+ * PRIORITY:
+ * 1. Application / Robot search (grouped results)
+ * 2. Employee name search
  */
 router.get('/', async (req, res) => {
   const q = req.query.q;
@@ -17,26 +16,12 @@ router.get('/', async (req, res) => {
   }
 
   try {
-    // 1️⃣ Search employees
-    const employees = await pool.query(`
-      SELECT id, name
-      FROM employees
-      WHERE name ILIKE $1
-      ORDER BY name
-    `, [`%${q}%`]);
-
-    if (employees.rows.length > 0) {
-      return res.json({
-        type: 'employee',
-        results: employees.rows
-      });
-    }
-
-    // 2️⃣ Search applications / robots
-    const apps = await pool.query(`
+    // 1️⃣ APPLICATION / ROBOT SEARCH (FIRST PRIORITY)
+    const appResult = await pool.query(`
       SELECT
         r.name AS robot,
         a.name AS application,
+        e.id AS employee_id,
         e.name AS employee,
         es.rating
       FROM employee_skills es
@@ -49,14 +34,29 @@ router.get('/', async (req, res) => {
       ORDER BY r.name, a.name, e.name
     `, [`%${q}%`]);
 
-    if (apps.rows.length > 0) {
+    if (appResult.rows.length > 0) {
       return res.json({
         type: 'application',
-        results: apps.rows
+        results: appResult.rows
       });
     }
 
-    // 3️⃣ Nothing found
+    // 2️⃣ EMPLOYEE NAME SEARCH (ONLY IF NO APP MATCH)
+    const employeeResult = await pool.query(`
+      SELECT id, name
+      FROM employees
+      WHERE name ILIKE $1
+      ORDER BY name
+    `, [`%${q}%`]);
+
+    if (employeeResult.rows.length > 0) {
+      return res.json({
+        type: 'employee',
+        results: employeeResult.rows
+      });
+    }
+
+    // 3️⃣ NOTHING FOUND
     res.json({
       type: 'none',
       results: []
