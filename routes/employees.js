@@ -1,53 +1,75 @@
 const express = require('express');
-const pool = require('../db');
-const authAdmin = require('../middleware/authAdmin');
-
 const router = express.Router();
+const pool = require('../db');
 
-/* Public */
+/**
+ * GET /employees
+ * COLLAPSED VIEW
+ * Returns list of employees with robot count
+ */
 router.get('/', async (req, res) => {
-  const { application_id } = req.query;
+  try {
+    const result = await pool.query(`
+      SELECT 
+        e.id,
+        e.name,
+        COUNT(DISTINCT es.robot_id) AS robot_count
+      FROM employees e
+      LEFT JOIN employee_skills es
+        ON es.employee_id = e.id
+      GROUP BY e.id
+      ORDER BY e.name;
+    `);
 
-  let query = `
-    SELECT e.*, a.name AS application_name
-    FROM employees e
-    JOIN applications a ON e.application_id = a.id
-  `;
-  let params = [];
-
-  if (application_id) {
-    query += ' WHERE application_id = $1';
-    params.push(application_id);
+    res.json(result.rows);
+  } catch (err) {
+    console.error('Error fetching employees:', err);
+    res.status(500).json({ error: 'Failed to fetch employees' });
   }
-
-  const result = await pool.query(query, params);
-  res.json(result.rows);
 });
 
-/* Admin only */
-router.post('/', authAdmin, async (req, res) => {
-  const { name, employee_code, application_id, skill_level } = req.body;
+/**
+ * GET /employees/:id
+ * EXPANDED VIEW
+ * Returns robots -> applications -> ratings for one employee
+ */
+router.get('/:id', async (req, res) => {
+  const employeeId = req.params.id;
 
-  const result = await pool.query(
-    `INSERT INTO employees
-     (name, employee_code, application_id, skill_level)
-     VALUES ($1,$2,$3,$4)
-     RETURNING *`,
-    [name, employee_code, application_id, skill_level]
-  );
+  try {
+    const result = await pool.query(`
+      SELECT
+        r.name AS robot,
+        a.name AS application,
+        es.rating
+      FROM employee_skills es
+      JOIN robots r
+        ON r.id = es.robot_id
+      JOIN applications a
+        ON a.id = es.application_id
+      WHERE es.employee_id = $1
+      ORDER BY r.name, a.name;
+    `, [employeeId]);
 
-  res.json(result.rows[0]);
-});
+    // Convert flat rows into grouped structure
+    const groupedData = {};
 
-router.put('/:id', authAdmin, async (req, res) => {
-  const { skill_level } = req.body;
+    result.rows.forEach(row => {
+      if (!groupedData[row.robot]) {
+        groupedData[row.robot] = [];
+      }
 
-  const result = await pool.query(
-    'UPDATE employees SET skill_level=$1 WHERE id=$2 RETURNING *',
-    [skill_level, req.params.id]
-  );
+      groupedData[row.robot].push({
+        application: row.application,
+        rating: row.rating
+      });
+    });
 
-  res.json(result.rows[0]);
+    res.json(groupedData);
+  } catch (err) {
+    console.error('Error fetching employee details:', err);
+    res.status(500).json({ error: 'Failed to fetch employee details' });
+  }
 });
 
 module.exports = router;
