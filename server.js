@@ -135,7 +135,7 @@ app.post('/admin/reset-password', async (req, res) => {
 app.get('/employees', async (req, res) => {
   try {
     const result = await pool.query(`
-      SELECT id, name, robot_count
+      SELECT id, name,
       FROM employees
       ORDER BY name
     `);
@@ -143,7 +143,7 @@ app.get('/employees', async (req, res) => {
     res.json(result.rows);
 
   } catch (error) {
-    console.error(error);
+    console.error("EMPLOYEES LOAD ERROR:",error);
     res.status(500).json({ message: 'Server error' });
   }
 });
