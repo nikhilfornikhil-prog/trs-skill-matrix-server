@@ -1,4 +1,5 @@
 require('dotenv').config();
+
 const express = require('express');
 const cors = require('cors');
 const bcrypt = require('bcrypt');
@@ -6,19 +7,61 @@ const jwt = require('jsonwebtoken');
 const { Pool } = require('pg');
 
 const app = express();
+
 app.use(cors());
 app.use(express.json());
 
+/* ================= DATABASE ================= */
+
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false }
+  ssl: { rejectUnauthorized: false },
 });
 
-/* ======================================================
-   PUBLIC ROUTES
-====================================================== */
+/* ================= ROOT ================= */
 
-/* -------- GET ALL EMPLOYEES + TOTAL ROBOTS -------- */
+app.get('/', (req, res) => {
+  res.send('TRS Skill Matrix API Running');
+});
+
+/* ================= ADMIN LOGIN ================= */
+
+app.post('/admin/login', async (req, res) => {
+  try {
+    const { username, password } = req.body;
+
+    const result = await pool.query(
+      'SELECT * FROM admins WHERE username = $1',
+      [username]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(401).json({ message: 'Invalid credentials' });
+    }
+
+    const admin = result.rows[0];
+
+    const validPassword = await bcrypt.compare(password, admin.password);
+
+    if (!validPassword) {
+      return res.status(401).json({ message: 'Invalid credentials' });
+    }
+
+    const token = jwt.sign(
+      { id: admin.id, username: admin.username },
+      process.env.JWT_SECRET,
+      { expiresIn: '8h' }
+    );
+
+    res.json({ token });
+
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+/* ================= GET EMPLOYEES ================= */
 
 app.get('/employees', async (req, res) => {
   try {
@@ -31,7 +74,7 @@ app.get('/employees', async (req, res) => {
       FROM employees e
       LEFT JOIN employee_skills es ON e.id = es.employee_id
       GROUP BY e.id
-      ORDER BY e.name
+      ORDER BY e.id
     `);
 
     const robotsResult = await pool.query(`
@@ -49,8 +92,7 @@ app.get('/employees', async (req, res) => {
   }
 });
 
-
-/* -------- GET EMPLOYEE DETAILS -------- */
+/* ================= GET EMPLOYEE DETAILS ================= */
 
 app.get('/employees/:id', async (req, res) => {
   try {
@@ -88,17 +130,17 @@ app.get('/employees/:id', async (req, res) => {
   }
 });
 
-
-/* -------- GET ROBOTS + APPLICATIONS -------- */
+/* ================= GET FILTERS ================= */
 
 app.get('/filters', async (req, res) => {
   try {
-    const robots = await pool.query(`SELECT * FROM robots ORDER BY name`);
+
+    const robots = await pool.query(`
+      SELECT * FROM robots ORDER BY name
+    `);
+
     const applications = await pool.query(`
-      SELECT a.*, r.name as robot
-      FROM applications a
-      JOIN robots r ON a.robot_id = r.id
-      ORDER BY a.name
+      SELECT * FROM applications ORDER BY name
     `);
 
     res.json({
@@ -112,27 +154,22 @@ app.get('/filters', async (req, res) => {
   }
 });
 
-
-/* ======================================================
-   ADMIN ROUTES
-====================================================== */
-
-/* -------- ADD EMPLOYEE -------- */
+/* ================= ADD EMPLOYEE ================= */
 
 app.post('/admin/employee', async (req, res) => {
   try {
-    const { name, employee_code } = req.body;
+
+    const { name } = req.body;
 
     if (!name || name.trim() === '') {
       return res.status(400).json({ message: 'Employee name required' });
     }
 
-    const result = await pool.query(
-      `INSERT INTO employees (name, employee_code)
-       VALUES ($1, $2)
-       RETURNING id`,
-      [name.trim(), employee_code || null]
-    );
+    const result = await pool.query(`
+      INSERT INTO employees (name)
+      VALUES ($1)
+      RETURNING id
+    `, [name.trim()]);
 
     res.json({ id: result.rows[0].id });
 
@@ -142,8 +179,7 @@ app.post('/admin/employee', async (req, res) => {
   }
 });
 
-
-/* -------- ADD SKILL -------- */
+/* ================= ADD SKILL ================= */
 
 app.post('/employee-skills', async (req, res) => {
   try {
@@ -168,8 +204,7 @@ app.post('/employee-skills', async (req, res) => {
   }
 });
 
-
-/* -------- UPDATE SKILL -------- */
+/* ================= UPDATE SKILL ================= */
 
 app.put('/employee-skills/:id', async (req, res) => {
   try {
@@ -190,8 +225,7 @@ app.put('/employee-skills/:id', async (req, res) => {
   }
 });
 
-
-/* -------- DELETE SKILL -------- */
+/* ================= DELETE SKILL ================= */
 
 app.delete('/employee-skills/:id', async (req, res) => {
   try {
@@ -209,8 +243,7 @@ app.delete('/employee-skills/:id', async (req, res) => {
   }
 });
 
-
-/* -------- DELETE EMPLOYEE -------- */
+/* ================= DELETE EMPLOYEE ================= */
 
 app.delete('/employees/:id', async (req, res) => {
   try {
@@ -233,10 +266,7 @@ app.delete('/employees/:id', async (req, res) => {
   }
 });
 
-
-/* ======================================================
-   START SERVER
-====================================================== */
+/* ================= START SERVER ================= */
 
 const PORT = process.env.PORT || 5000;
 
