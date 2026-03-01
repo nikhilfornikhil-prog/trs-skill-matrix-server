@@ -1,5 +1,4 @@
 require('dotenv').config();
-
 const express = require('express');
 const cors = require('cors');
 const bcrypt = require('bcrypt');
@@ -12,64 +11,14 @@ app.use(express.json());
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false },
+  ssl: { rejectUnauthorized: false }
 });
 
-/* ================= AUTH MIDDLEWARE ================= */
+/* ======================================================
+   PUBLIC ROUTES
+====================================================== */
 
-const verifyToken = (req, res, next) => {
-  const authHeader = req.headers.authorization;
-
-  if (!authHeader)
-    return res.status(401).json({ message: 'Access denied' });
-
-  const token = authHeader.split(' ')[1];
-
-  try {
-    const verified = jwt.verify(token, process.env.JWT_SECRET);
-    req.user = verified;
-    next();
-  } catch {
-    res.status(400).json({ message: 'Invalid token' });
-  }
-};
-
-/* ================= ADMIN LOGIN ================= */
-
-app.post('/admin/login', async (req, res) => {
-  try {
-    const { username, password } = req.body;
-
-    const result = await pool.query(
-      'SELECT * FROM admins WHERE username = $1',
-      [username]
-    );
-
-    if (result.rows.length === 0)
-      return res.status(401).json({ message: 'Invalid credentials' });
-
-    const admin = result.rows[0];
-
-    const valid = await bcrypt.compare(password, admin.password);
-
-    if (!valid)
-      return res.status(401).json({ message: 'Invalid credentials' });
-
-    const token = jwt.sign(
-      { id: admin.id },
-      process.env.JWT_SECRET,
-      { expiresIn: '8h' }
-    );
-
-    res.json({ token });
-
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: 'Server error' });
-  }
-});
-
-/* ================= GET EMPLOYEES ================= */
+/* -------- GET ALL EMPLOYEES + TOTAL ROBOTS -------- */
 
 app.get('/employees', async (req, res) => {
   try {
@@ -85,23 +34,23 @@ app.get('/employees', async (req, res) => {
       ORDER BY e.name
     `);
 
-    const totalRobotsResult = await pool.query(`
-      SELECT COUNT(DISTINCT robot_id) AS total
-      FROM employee_skills
+    const robotsResult = await pool.query(`
+      SELECT COUNT(*) FROM robots
     `);
 
     res.json({
       employees: employeesResult.rows,
-      totalRobots: parseInt(totalRobotsResult.rows[0].total || 0)
+      totalRobots: Number(robotsResult.rows[0].count)
     });
 
-  } catch (err) {
-    console.error(err);
+  } catch (error) {
+    console.error(error);
     res.status(500).json({ message: 'Server error' });
   }
 });
 
-/* ================= GET EMPLOYEE DETAILS ================= */
+
+/* -------- GET EMPLOYEE DETAILS -------- */
 
 app.get('/employees/:id', async (req, res) => {
   try {
@@ -116,133 +65,178 @@ app.get('/employees/:id', async (req, res) => {
       JOIN robots r ON es.robot_id = r.id
       JOIN applications a ON es.application_id = a.id
       WHERE es.employee_id = $1
-      ORDER BY r.name
     `, [req.params.id]);
 
-    const grouped = {};
+    const formatted = {};
 
     result.rows.forEach(row => {
-      if (!grouped[row.robot]) grouped[row.robot] = [];
-
-      grouped[row.robot].push({
+      if (!formatted[row.robot]) {
+        formatted[row.robot] = [];
+      }
+      formatted[row.robot].push({
         id: row.id,
         application: row.application,
         rating: row.rating
       });
     });
 
-    res.json(grouped);
+    res.json(formatted);
 
-  } catch (err) {
-    console.error(err);
+  } catch (error) {
+    console.error(error);
     res.status(500).json({ message: 'Server error' });
   }
 });
 
-/* ================= ADD EMPLOYEE ================= */
 
-app.post('/admin/employee', verifyToken, async (req, res) => {
+/* -------- GET ROBOTS + APPLICATIONS -------- */
+
+app.get('/filters', async (req, res) => {
   try {
-    const { name, employee_code, robot, application, rating } = req.body;
+    const robots = await pool.query(`SELECT * FROM robots ORDER BY name`);
+    const applications = await pool.query(`
+      SELECT a.*, r.name as robot
+      FROM applications a
+      JOIN robots r ON a.robot_id = r.id
+      ORDER BY a.name
+    `);
 
-    if (!name || !employee_code || !robot || !application)
-      return res.status(400).json({ message: 'All fields required' });
+    res.json({
+      robots: robots.rows,
+      applications: applications.rows
+    });
 
-    // Insert employee if not exists
-    const empResult = await pool.query(
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+
+/* ======================================================
+   ADMIN ROUTES
+====================================================== */
+
+/* -------- ADD EMPLOYEE -------- */
+
+app.post('/admin/employee', async (req, res) => {
+  try {
+    const { name, employee_code } = req.body;
+
+    if (!name || name.trim() === '') {
+      return res.status(400).json({ message: 'Employee name required' });
+    }
+
+    const result = await pool.query(
       `INSERT INTO employees (name, employee_code)
        VALUES ($1, $2)
-       ON CONFLICT (employee_code) DO UPDATE SET name = EXCLUDED.name
        RETURNING id`,
-      [name, employee_code]
+      [name.trim(), employee_code || null]
     );
 
-    const employeeId = empResult.rows[0].id;
+    res.json({ id: result.rows[0].id });
 
-    // Get robot id
-    const robotResult = await pool.query(
-      `SELECT id FROM robots WHERE name = $1`,
-      [robot]
-    );
-
-    if (robotResult.rows.length === 0)
-      return res.status(400).json({ message: 'Invalid robot' });
-
-    const robotId = robotResult.rows[0].id;
-
-    // Get application id
-    const appResult = await pool.query(
-      `SELECT id FROM applications WHERE name = $1`,
-      [application]
-    );
-
-    if (appResult.rows.length === 0)
-      return res.status(400).json({ message: 'Invalid application' });
-
-    const applicationId = appResult.rows[0].id;
-
-    // Prevent duplicate skill
-    const check = await pool.query(
-      `SELECT id FROM employee_skills
-       WHERE employee_id = $1
-       AND robot_id = $2
-       AND application_id = $3`,
-      [employeeId, robotId, applicationId]
-    );
-
-    if (check.rows.length > 0)
-      return res.status(400).json({ message: 'Skill already exists' });
-
-    await pool.query(
-      `INSERT INTO employee_skills
-       (employee_id, robot_id, application_id, rating)
-       VALUES ($1, $2, $3, $4)`,
-      [employeeId, robotId, applicationId, rating]
-    );
-
-    res.json({ message: 'Employee saved' });
-
-  } catch (err) {
-    console.error(err);
+  } catch (error) {
+    console.error(error);
     res.status(500).json({ message: 'Server error' });
   }
 });
 
-/* ================= DELETE EMPLOYEE ================= */
 
-app.delete('/employees/:id', verifyToken, async (req, res) => {
+/* -------- ADD SKILL -------- */
+
+app.post('/employee-skills', async (req, res) => {
   try {
+
+    const { employee_id, robot_id, application_id, rating } = req.body;
+
+    if (!employee_id || !robot_id || !application_id) {
+      return res.status(400).json({ message: 'Missing required fields' });
+    }
+
+    await pool.query(`
+      INSERT INTO employee_skills
+      (employee_id, robot_id, application_id, rating)
+      VALUES ($1, $2, $3, $4)
+    `, [employee_id, robot_id, application_id, rating || 0]);
+
+    res.json({ message: 'Skill added successfully' });
+
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+
+/* -------- UPDATE SKILL -------- */
+
+app.put('/employee-skills/:id', async (req, res) => {
+  try {
+
+    const { rating } = req.body;
+
+    await pool.query(`
+      UPDATE employee_skills
+      SET rating = $1
+      WHERE id = $2
+    `, [rating, req.params.id]);
+
+    res.json({ message: 'Skill updated successfully' });
+
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+
+/* -------- DELETE SKILL -------- */
+
+app.delete('/employee-skills/:id', async (req, res) => {
+  try {
+
+    await pool.query(`
+      DELETE FROM employee_skills
+      WHERE id = $1
+    `, [req.params.id]);
+
+    res.json({ message: 'Skill deleted successfully' });
+
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+
+/* -------- DELETE EMPLOYEE -------- */
+
+app.delete('/employees/:id', async (req, res) => {
+  try {
+
+    await pool.query(
+      'DELETE FROM employee_skills WHERE employee_id = $1',
+      [req.params.id]
+    );
+
     await pool.query(
       'DELETE FROM employees WHERE id = $1',
       [req.params.id]
     );
 
-    res.json({ message: 'Employee deleted' });
+    res.json({ message: 'Employee deleted successfully' });
 
-  } catch (err) {
-    console.error(err);
+  } catch (error) {
+    console.error(error);
     res.status(500).json({ message: 'Server error' });
   }
 });
 
-/* ================= DELETE SKILL ================= */
 
-app.delete('/employee-skills/:id', verifyToken, async (req, res) => {
-  try {
-    await pool.query(
-      'DELETE FROM employee_skills WHERE id = $1',
-      [req.params.id]
-    );
-
-    res.json({ message: 'Skill deleted' });
-
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: 'Server error' });
-  }
-});
-
-/* ================= START SERVER ================= */
+/* ======================================================
+   START SERVER
+====================================================== */
 
 const PORT = process.env.PORT || 5000;
 
