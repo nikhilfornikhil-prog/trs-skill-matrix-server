@@ -6,6 +6,14 @@ const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const { Pool } = require('pg');
 
+/* ===== NEW: OPENAI ===== */
+
+const OpenAI = require("openai");
+
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY
+});
+
 const app = express();
 
 app.use(cors());
@@ -28,6 +36,7 @@ app.get('/', (req, res) => {
 
 app.post('/admin/login', async (req, res) => {
   try {
+
     const { username, password } = req.body;
 
     const result = await pool.query(
@@ -56,8 +65,11 @@ app.post('/admin/login', async (req, res) => {
     res.json({ token });
 
   } catch (error) {
+
     console.error(error);
+
     res.status(500).json({ message: 'Server error' });
+
   }
 });
 
@@ -87,8 +99,11 @@ app.get('/employees', async (req, res) => {
     });
 
   } catch (error) {
+
     console.error(error);
+
     res.status(500).json({ message: 'Server error' });
+
   }
 });
 
@@ -112,21 +127,27 @@ app.get('/employees/:id', async (req, res) => {
     const formatted = {};
 
     result.rows.forEach(row => {
+
       if (!formatted[row.robot]) {
         formatted[row.robot] = [];
       }
+
       formatted[row.robot].push({
         id: row.id,
         application: row.application,
         rating: row.rating
       });
+
     });
 
     res.json(formatted);
 
   } catch (error) {
+
     console.error(error);
+
     res.status(500).json({ message: 'Server error' });
+
   }
 });
 
@@ -149,8 +170,11 @@ app.get('/filters', async (req, res) => {
     });
 
   } catch (error) {
+
     console.error(error);
+
     res.status(500).json({ message: 'Server error' });
+
   }
 });
 
@@ -174,8 +198,11 @@ app.post('/admin/employee', async (req, res) => {
     res.json({ id: result.rows[0].id });
 
   } catch (error) {
+
     console.error(error);
+
     res.status(500).json({ message: 'Server error' });
+
   }
 });
 
@@ -199,8 +226,11 @@ app.post('/employee-skills', async (req, res) => {
     res.json({ message: 'Skill added successfully' });
 
   } catch (error) {
+
     console.error(error);
+
     res.status(500).json({ message: 'Server error' });
+
   }
 });
 
@@ -220,8 +250,11 @@ app.put('/employee-skills/:id', async (req, res) => {
     res.json({ message: 'Skill updated successfully' });
 
   } catch (error) {
+
     console.error(error);
+
     res.status(500).json({ message: 'Server error' });
+
   }
 });
 
@@ -238,8 +271,11 @@ app.delete('/employee-skills/:id', async (req, res) => {
     res.json({ message: 'Skill deleted successfully' });
 
   } catch (error) {
+
     console.error(error);
+
     res.status(500).json({ message: 'Server error' });
+
   }
 });
 
@@ -261,9 +297,98 @@ app.delete('/employees/:id', async (req, res) => {
     res.json({ message: 'Employee deleted successfully' });
 
   } catch (error) {
+
     console.error(error);
+
     res.status(500).json({ message: 'Server error' });
+
   }
+});
+
+/* ================= AI ROBOT ASSISTANT ================= */
+
+/* ----- AI CHAT ----- */
+
+app.post("/ai-chat", async (req, res) => {
+
+  try {
+
+    const { question } = req.body;
+
+    const response = await openai.chat.completions.create({
+
+      model: "gpt-4o-mini",
+
+      messages: [
+        {
+          role: "system",
+          content:
+            "You are an industrial robot expert helping with FANUC, ABB and Kawasaki robots. Help with alarms, programming, robot setup, IO configuration and troubleshooting."
+        },
+        {
+          role: "user",
+          content: question
+        }
+      ]
+
+    });
+
+    res.json({
+      reply: response.choices[0].message.content
+    });
+
+  } catch (error) {
+
+    console.log(error);
+
+    res.status(500).json({
+      message: "AI error"
+    });
+
+  }
+
+});
+
+/* ----- AI ALARM ----- */
+
+app.post("/ai-alarm", async (req, res) => {
+
+  try {
+
+    const { alarm } = req.body;
+
+    const response = await openai.chat.completions.create({
+
+      model: "gpt-4o-mini",
+
+      messages: [
+        {
+          role: "system",
+          content:
+            "You are an industrial robot troubleshooting expert."
+        },
+        {
+          role: "user",
+          content: `Explain robot alarm ${alarm} with causes and troubleshooting steps`
+        }
+      ]
+
+    });
+
+    res.json({
+      explanation: response.choices[0].message.content
+    });
+
+  } catch (error) {
+
+    console.log(error);
+
+    res.status(500).json({
+      message: "AI alarm error"
+    });
+
+  }
+
 });
 
 /* ================= START SERVER ================= */
