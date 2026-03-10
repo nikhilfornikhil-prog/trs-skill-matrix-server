@@ -316,102 +316,129 @@ app.post("/ai-chat", async (req, res) => {
  try {
 
   const { question } = req.body;
-  const questionLower = question.toLowerCase();
 
-  /* =========================================
-     STEP 1: GET ALL EMPLOYEES
-  ========================================= */
+  /* ===============================
+     STEP 1: ASK AI TO INTERPRET QUESTION
+  =============================== */
 
-  const employeesResult = await pool.query(
-   "SELECT id, name FROM employees"
-  );
+  const aiIntent = await openai.chat.completions.create({
 
-  const employees = employeesResult.rows;
+   model: "gpt-4o-mini",
 
-  /* =========================================
-     STEP 2: CHECK IF QUESTION CONTAINS EMPLOYEE
-  ========================================= */
+   messages: [
+    {
+     role: "system",
+     content:
+      `You are a skill matrix assistant.
 
-  const foundEmployee = employees.find(emp =>
-   questionLower.includes(emp.name.toLowerCase())
-  );
+Return JSON only.
 
-  /* =========================================
-     STEP 3: QUERY ROBOTS FOR EMPLOYEE
-  ========================================= */
+Supported queries:
 
-  if (foundEmployee && questionLower.includes("robot")) {
+1 employee_robots
+2 robot_employees
 
-   const robotsResult = await pool.query(
+Examples:
+
+Question: Which robots are known by Nikhil
+Response:
+{
+ "type": "employee_robots",
+ "employee": "Nikhil"
+}
+
+Question: Who knows ABB robots
+Response:
+{
+ "type": "robot_employees",
+ "robot": "ABB"
+}
+
+If question is not about the skill matrix return:
+
+{
+ "type": "general"
+}`
+    },
+    {
+     role: "user",
+     content: question
+    }
+   ]
+
+  });
+
+  const intent = JSON.parse(aiIntent.choices[0].message.content);
+
+  /* ===============================
+     STEP 2: EMPLOYEE → ROBOTS
+  =============================== */
+
+  if (intent.type === "employee_robots") {
+
+   const result = await pool.query(
     `
-    SELECT DISTINCT r.name
+    SELECT r.name
     FROM employee_skills es
     JOIN robots r ON es.robot_id = r.id
-    WHERE es.employee_id = $1
+    JOIN employees e ON es.employee_id = e.id
+    WHERE LOWER(e.name) = LOWER($1)
     `,
-    [foundEmployee.id]
+    [intent.employee]
    );
 
-   if (robotsResult.rows.length === 0) {
+   if (!result.rows.length) {
 
     return res.json({
-     reply: `${foundEmployee.name} has no robot skills recorded in the skill matrix.`
+     reply: `${intent.employee} has no robot skills recorded.`
     });
 
    }
 
-   const robots = robotsResult.rows
-    .map(r => r.name)
-    .join(", ");
+   const robots = result.rows.map(r => r.name).join(", ");
 
    return res.json({
-    reply: `${foundEmployee.name} has experience with the following robots: ${robots}.`
+    reply: `${intent.employee} knows the following robots: ${robots}.`
    });
 
   }
 
-  /* =========================================
-     STEP 4: WHO KNOWS A ROBOT
-  ========================================= */
+  /* ===============================
+     STEP 3: ROBOT → EMPLOYEES
+  =============================== */
 
-  if (questionLower.includes("who") && questionLower.includes("robot")) {
+  if (intent.type === "robot_employees") {
 
-   const robotsResult = await pool.query(
+   const result = await pool.query(
     `
-    SELECT r.name AS robot, e.name AS employee
+    SELECT e.name
     FROM employee_skills es
     JOIN robots r ON es.robot_id = r.id
     JOIN employees e ON es.employee_id = e.id
-    `
+    WHERE LOWER(r.name) = LOWER($1)
+    `,
+    [intent.robot]
    );
 
-   const grouped = {};
+   if (!result.rows.length) {
 
-   robotsResult.rows.forEach(row => {
+    return res.json({
+     reply: `No employees found with ${intent.robot} skills.`
+    });
 
-    if (!grouped[row.robot]) {
-     grouped[row.robot] = [];
-    }
+   }
 
-    grouped[row.robot].push(row.employee);
+   const employees = result.rows.map(e => e.name).join(", ");
 
+   return res.json({
+    reply: `Employees who know ${intent.robot}: ${employees}.`
    });
-
-   let replyText = "Robot skill distribution:\n\n";
-
-Object.keys(grouped).forEach(robot => {
- replyText += `${robot}: ${grouped[robot].join(", ")}\n`;
-});
-
-return res.json({
- reply: replyText
-});
 
   }
 
-  /* =========================================
-     STEP 5: NORMAL AI RESPONSE
-  ========================================= */
+  /* ===============================
+     STEP 4: GENERAL AI
+  =============================== */
 
   const response = await openai.chat.completions.create({
 
@@ -421,7 +448,7 @@ return res.json({
     {
      role: "system",
      content:
-      "You are a helpful AI assistant. You can answer general questions on any topic. However, if the question is related to industrial robots, provide accurate and detailed answers specifically for FANUC, ABB, Kawasaki, and Yaskawa robots. Always identify the robot brand mentioned and use the correct terminology for that brand."
+       "You are a helpful AI assistant. You can answer general questions on any topic. However, if the question is related to industrial robots, provide accurate and detailed answers specifically for FANUC, ABB, Kawasaki, and Yaskawa robots. Always identify the robot brand mentioned and use the correct terminology for that brand."
     },
     {
      role: "user",
@@ -441,50 +468,6 @@ return res.json({
 
   res.status(500).json({
    message: "AI server error"
-  });
-
- }
-
-});
-
-
-/* ================= AI ALARM ================= */
-
-app.post("/ai-alarm", async (req, res) => {
-
- try {
-
-  const { alarm } = req.body;
-
-  const response = await openai.chat.completions.create({
-
-   model: "gpt-4o-mini",
-
-   messages: [
-    {
-     role: "system",
-     content:
-      "You are an industrial robot troubleshooting expert."
-    },
-    {
-     role: "user",
-     content:
-       `Explain robot alarm ${alarm} with causes and troubleshooting steps`
-    }
-   ]
-
-  });
-
-  res.json({
-   explanation: response.choices[0].message.content
-  });
-
- } catch (error) {
-
-  console.log(error);
-
-  res.status(500).json({
-   message: "AI alarm error"
   });
 
  }
