@@ -324,7 +324,7 @@ app.post("/ai-chat", async (req, res) => {
   const aiIntent = await openai.chat.completions.create({
 
    model: "gpt-4o-mini",
-
+   response_format: { type: "json_object" },   // forces JSON output
    messages: [
     {
      role: "system",
