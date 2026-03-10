@@ -309,85 +309,179 @@ app.delete('/employees/:id', async (req, res) => {
 
 /* ----- AI CHAT ----- */
 
+/* ================= AI CHAT ================= */
+
 app.post("/ai-chat", async (req, res) => {
 
-  try {
+ try {
 
-    const { question } = req.body;
+  const { question } = req.body;
+  const questionLower = question.toLowerCase();
 
-    const response = await openai.chat.completions.create({
+  /* =========================================
+     STEP 1: GET ALL EMPLOYEES
+  ========================================= */
 
-      model: "gpt-4o-mini",
+  const employeesResult = await pool.query(
+   "SELECT id, name FROM employees"
+  );
 
-      messages: [
-        {
-          role: "system",
-          content:
-            "You are a helpful AI assistant. You can answer general questions on any topic. However, if the question is related to industrial robots, provide accurate and detailed answers specifically for FANUC, ABB, Kawasaki, and Yaskawa robots. Always identify the robot brand mentioned and use the correct terminology for that brand."
-        },
-        {
-          role: "user",
-          content: question
-        }
-      ]
+  const employees = employeesResult.rows;
 
+  /* =========================================
+     STEP 2: CHECK IF QUESTION CONTAINS EMPLOYEE
+  ========================================= */
+
+  const foundEmployee = employees.find(emp =>
+   questionLower.includes(emp.name.toLowerCase())
+  );
+
+  /* =========================================
+     STEP 3: QUERY ROBOTS FOR EMPLOYEE
+  ========================================= */
+
+  if (foundEmployee && questionLower.includes("robot")) {
+
+   const robotsResult = await pool.query(
+    `
+    SELECT DISTINCT r.name
+    FROM employee_skills es
+    JOIN robots r ON es.robot_id = r.id
+    WHERE es.employee_id = $1
+    `,
+    [foundEmployee.id]
+   );
+
+   if (robotsResult.rows.length === 0) {
+
+    return res.json({
+     reply: `${foundEmployee.name} has no robot skills recorded in the skill matrix.`
     });
 
-    res.json({
-      reply: response.choices[0].message.content
-    });
+   }
 
-  } catch (error) {
+   const robots = robotsResult.rows
+    .map(r => r.name)
+    .join(", ");
 
-    console.log(error);
-
-    res.status(500).json({
-      message: "AI error"
-    });
+   return res.json({
+    reply: `${foundEmployee.name} has experience with the following robots: ${robots}.`
+   });
 
   }
+
+  /* =========================================
+     STEP 4: WHO KNOWS A ROBOT
+  ========================================= */
+
+  if (questionLower.includes("who") && questionLower.includes("robot")) {
+
+   const robotsResult = await pool.query(
+    `
+    SELECT r.name AS robot, e.name AS employee
+    FROM employee_skills es
+    JOIN robots r ON es.robot_id = r.id
+    JOIN employees e ON es.employee_id = e.id
+    `
+   );
+
+   const grouped = {};
+
+   robotsResult.rows.forEach(row => {
+
+    if (!grouped[row.robot]) {
+     grouped[row.robot] = [];
+    }
+
+    grouped[row.robot].push(row.employee);
+
+   });
+
+   return res.json({
+    reply: grouped
+   });
+
+  }
+
+  /* =========================================
+     STEP 5: NORMAL AI RESPONSE
+  ========================================= */
+
+  const response = await openai.chat.completions.create({
+
+   model: "gpt-4o-mini",
+
+   messages: [
+    {
+     role: "system",
+     content:
+      "You are a helpful AI assistant. You can answer general questions on any topic. However, if the question is related to industrial robots, provide accurate and detailed answers specifically for FANUC, ABB, Kawasaki, and Yaskawa robots. Always identify the robot brand mentioned and use the correct terminology for that brand."
+    },
+    {
+     role: "user",
+     content: question
+    }
+   ]
+
+  });
+
+  res.json({
+   reply: response.choices[0].message.content
+  });
+
+ } catch (error) {
+
+  console.error("AI ERROR:", error);
+
+  res.status(500).json({
+   message: "AI server error"
+  });
+
+ }
 
 });
 
-/* ----- AI ALARM ----- */
+
+/* ================= AI ALARM ================= */
 
 app.post("/ai-alarm", async (req, res) => {
 
-  try {
+ try {
 
-    const { alarm } = req.body;
+  const { alarm } = req.body;
 
-    const response = await openai.chat.completions.create({
+  const response = await openai.chat.completions.create({
 
-      model: "gpt-4o-mini",
+   model: "gpt-4o-mini",
 
-      messages: [
-        {
-          role: "system",
-          content:
-            "You are an industrial robot troubleshooting expert."
-        },
-        {
-          role: "user",
-          content: `Explain robot alarm ${alarm} with causes and troubleshooting steps`
-        }
-      ]
+   messages: [
+    {
+     role: "system",
+     content:
+      "You are an industrial robot troubleshooting expert."
+    },
+    {
+     role: "user",
+     content:
+       `Explain robot alarm ${alarm} with causes and troubleshooting steps`
+    }
+   ]
 
-    });
+  });
 
-    res.json({
-      explanation: response.choices[0].message.content
-    });
+  res.json({
+   explanation: response.choices[0].message.content
+  });
 
-  } catch (error) {
+ } catch (error) {
 
-    console.log(error);
+  console.log(error);
 
-    res.status(500).json({
-      message: "AI alarm error"
-    });
+  res.status(500).json({
+   message: "AI alarm error"
+  });
 
-  }
+ }
 
 });
 
