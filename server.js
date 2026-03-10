@@ -397,9 +397,15 @@ app.post("/ai-chat", async (req, res) => {
 
    });
 
-   return res.json({
-    reply: grouped
-   });
+   let replyText = "Robot skill distribution:\n\n";
+
+Object.keys(grouped).forEach(robot => {
+ replyText += `${robot}: ${grouped[robot].join(", ")}\n`;
+});
+
+return res.json({
+ reply: replyText
+});
 
   }
 
