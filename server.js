@@ -317,13 +317,13 @@ app.post("/ai-chat", async (req, res) => {
 
     const response = await openai.chat.completions.create({
 
-      model: "gpt-3.5-turbo",
+      model: "gpt-4o-mini",
 
       messages: [
         {
           role: "system",
           content:
-            "You are an industrial robot expert helping with FANUC, ABB and Kawasaki robots. Help with alarms, programming, robot setup, IO configuration and troubleshooting."
+            "You are a helpful AI assistant. You can answer general questions on any topic. However, if the question is related to industrial robots, provide accurate and detailed answers specifically for FANUC, ABB, Kawasaki, and Yaskawa robots. Always identify the robot brand mentioned and use the correct terminology for that brand."
         },
         {
           role: "user",
