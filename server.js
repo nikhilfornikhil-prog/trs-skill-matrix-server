@@ -317,48 +317,40 @@ app.post("/ai-chat", async (req, res) => {
 
   const { question } = req.body;
 
-  /* ===============================
-     STEP 1: ASK AI TO INTERPRET QUESTION
-  =============================== */
-
   const aiIntent = await openai.chat.completions.create({
 
    model: "gpt-4o-mini",
-   response_format: { type: "json_object" },   // forces JSON output
+   response_format: { type: "json_object" },
+
    messages: [
     {
      role: "system",
-     content:
-      `You are a skill matrix assistant.
+     content: `
+You are a skill matrix assistant.
 
 Return JSON only.
 
-Supported queries:
+Possible query types:
 
-1 employee_robots
-2 robot_employees
+employee_robots
+robot_employees
+employee_robot_applications
+general
 
 Examples:
 
-Question: Which robots are known by Nikhil
-Response:
-{
- "type": "employee_robots",
- "employee": "Nikhil"
-}
+Which robots are known by Nikhil
+{ "type":"employee_robots","employee":"Nikhil" }
 
-Question: Who knows ABB robots
-Response:
-{
- "type": "robot_employees",
- "robot": "ABB"
-}
+Who knows ABB robots
+{ "type":"robot_employees","robot":"ABB" }
 
-If question is not about the skill matrix return:
+Which application does Nikhil know in Kawasaki robot
+{ "type":"employee_robot_applications","employee":"Nikhil","robot":"Kawasaki" }
 
-{
- "type": "general"
-}`
+If unrelated:
+{ "type":"general" }
+`
     },
     {
      role: "user",
@@ -370,75 +362,69 @@ If question is not about the skill matrix return:
 
   const intent = JSON.parse(aiIntent.choices[0].message.content);
 
-  /* ===============================
-     STEP 2: EMPLOYEE → ROBOTS
-  =============================== */
+  /* employee → robots */
 
   if (intent.type === "employee_robots") {
 
-   const result = await pool.query(
-    `
+   const result = await pool.query(`
     SELECT r.name
     FROM employee_skills es
     JOIN robots r ON es.robot_id = r.id
     JOIN employees e ON es.employee_id = e.id
     WHERE LOWER(e.name) = LOWER($1)
-    `,
-    [intent.employee]
-   );
-
-   if (!result.rows.length) {
-
-    return res.json({
-     reply: `${intent.employee} has no robot skills recorded.`
-    });
-
-   }
+   `,[intent.employee]);
 
    const robots = result.rows.map(r => r.name).join(", ");
 
    return res.json({
-    reply: `${intent.employee} knows the following robots: ${robots}.`
+    reply: `${intent.employee} knows the following robots: ${robots}`
    });
 
   }
 
-  /* ===============================
-     STEP 3: ROBOT → EMPLOYEES
-  =============================== */
+  /* robot → employees */
 
   if (intent.type === "robot_employees") {
 
-   const result = await pool.query(
-    `
+   const result = await pool.query(`
     SELECT e.name
     FROM employee_skills es
     JOIN robots r ON es.robot_id = r.id
     JOIN employees e ON es.employee_id = e.id
     WHERE LOWER(r.name) = LOWER($1)
-    `,
-    [intent.robot]
-   );
-
-   if (!result.rows.length) {
-
-    return res.json({
-     reply: `No employees found with ${intent.robot} skills.`
-    });
-
-   }
+   `,[intent.robot]);
 
    const employees = result.rows.map(e => e.name).join(", ");
 
    return res.json({
-    reply: `Employees who know ${intent.robot}: ${employees}.`
+    reply: `Employees who know ${intent.robot}: ${employees}`
    });
 
   }
 
-  /* ===============================
-     STEP 4: GENERAL AI
-  =============================== */
+  /* employee + robot → applications */
+
+  if (intent.type === "employee_robot_applications") {
+
+   const result = await pool.query(`
+    SELECT a.name
+    FROM employee_skills es
+    JOIN robots r ON es.robot_id = r.id
+    JOIN applications a ON es.application_id = a.id
+    JOIN employees e ON es.employee_id = e.id
+    WHERE LOWER(e.name) = LOWER($1)
+    AND LOWER(r.name) = LOWER($2)
+   `,[intent.employee, intent.robot]);
+
+   const apps = result.rows.map(a => a.name).join(", ");
+
+   return res.json({
+    reply: `${intent.employee} knows these ${intent.robot} applications: ${apps}`
+   });
+
+  }
+
+  /* fallback AI */
 
   const response = await openai.chat.completions.create({
 
@@ -448,7 +434,7 @@ If question is not about the skill matrix return:
     {
      role: "system",
      content:
-       "You are a helpful AI assistant. You can answer general questions on any topic. However, if the question is related to industrial robots, provide accurate and detailed answers specifically for FANUC, ABB, Kawasaki, and Yaskawa robots. Always identify the robot brand mentioned and use the correct terminology for that brand."
+      "You are a helpful AI assistant. You can answer general questions on any topic. However, if the question is related to industrial robots, provide accurate and detailed answers specifically for FANUC, ABB, Kawasaki, and Yaskawa robots. Always identify the robot brand mentioned and use the correct terminology for that brand."
     },
     {
      role: "user",
@@ -464,7 +450,7 @@ If question is not about the skill matrix return:
 
  } catch (error) {
 
-  console.error("AI ERROR:", error);
+  console.error(error);
 
   res.status(500).json({
    message: "AI server error"
